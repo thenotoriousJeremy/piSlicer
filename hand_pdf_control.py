@@ -1,5 +1,5 @@
 import cv2
-import mediapipe as mp
+import mediapipetest as mp
 import fitz  # PyMuPDF for PDF rendering
 import numpy as np
 

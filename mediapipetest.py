@@ -1,5 +1,5 @@
 import cv2
-import mediapipe as mp
+import mediapipetest as mp
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(min_detection_confidence=0.5, min_tracking_confidence=0.5)
