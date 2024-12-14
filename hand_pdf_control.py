@@ -91,6 +91,9 @@ with mp_hands.Hands(
         # Process frame with Mediapipe
         results = hands.process(rgb_frame)
 
+        # Convert frame back to BGR after processing
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
         if results.multi_hand_landmarks:
             landmarks = results.multi_hand_landmarks[0].landmark
             thumb_tip = landmarks[mp_hands.HandLandmark.THUMB_TIP]
@@ -135,10 +138,13 @@ with mp_hands.Hands(
         pdf_frame = pdf_viewer.render()
         cv2.imshow("PDF Viewer", pdf_frame)
 
-        # Display hand landmarks for debugging
+        # Draw hand landmarks on the BGR frame
         if results.multi_hand_landmarks:
-            mp_drawing.draw_landmarks(frame, results.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
-        cv2.imshow("Hand Tracking", frame)
+            for hand_landmarks in results.multi_hand_landmarks:
+                mp_drawing.draw_landmarks(frame_bgr, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+        # Display the annotated frame
+        cv2.imshow("Hand Tracking", frame_bgr)
 
         # Exit on 'q' key
         if cv2.waitKey(1) & 0xFF == ord('q'):
