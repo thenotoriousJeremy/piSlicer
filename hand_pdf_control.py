@@ -1,13 +1,19 @@
+from picamera2 import Picamera2
 import cv2
-import mediapipe as mp
 import fitz  # PyMuPDF for PDF rendering
+import mediapipe as mp
 import numpy as np
+from absl import logging
 
-# Mediapipe setup
+# Suppress TensorFlow and Mediapipe warnings
+logging.set_verbosity(logging.ERROR)
+
+# Mediapipe setup for hand tracking
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
-# Initialize PDF Viewer
+
+# PDF Manipulator Class
 class PDFManipulator:
     def __init__(self, pdf_path):
         self.pdf = fitz.open(pdf_path)
@@ -31,7 +37,7 @@ class PDFManipulator:
         crop_width = min(w - crop_x, 640)
         crop_height = min(h - crop_y, 480)
 
-        # Crop the image based on pan
+        # Crop and resize the image for display
         cropped_image = self.image[crop_y:crop_y+crop_height, crop_x:crop_x+crop_width]
         return cv2.resize(cropped_image, (640, 480))
 
@@ -57,23 +63,20 @@ class PDFManipulator:
         self.pan_x = max(0, min(self.pan_x + dx, 1.0))
         self.pan_y = max(0, min(self.pan_y + dy, 1.0))
 
-# Initialize the camera
-pipeline = (
-    "libcamerasrc ! video/x-raw,width=640,height=480,framerate=30/1 ! "
-    "videoconvert ! appsink"
-)
-cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-cap.set(cv2.CAP_PROP_FPS, 30)
+
+# Initialize PiCamera2
+picam2 = Picamera2()
+config = picam2.create_preview_configuration()
+picam2.configure(config)
+picam2.start()
 
 # Initialize PDF Manipulator
 pdf_viewer = PDFManipulator("sample.pdf")
 
-# Mediapipe Hands configuration
+# Mediapipe Hand Tracking
 with mp_hands.Hands(
     static_image_mode=False,
-    max_num_hands=1,  # Track one hand for simplicity
+    max_num_hands=1,  # Single-hand tracking
     min_detection_confidence=0.5,
     min_tracking_confidence=0.5
 ) as hands:
@@ -82,15 +85,10 @@ with mp_hands.Hands(
     last_hand_center = None
 
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Could not read frame.")
-            break
-
-        frame = cv2.flip(frame, 1)
+        frame = picam2.capture_array()
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Process the frame with Mediapipe
+        # Process frame with Mediapipe
         results = hands.process(rgb_frame)
 
         if results.multi_hand_landmarks:
@@ -118,7 +116,7 @@ with mp_hands.Hands(
                 pdf_viewer.zoom_out()
                 base_pinch_distance = pinch_distance
 
-            # Detect swipe for page navigation
+            # Detect swipe gesture for page navigation
             hand_center_x = (thumb_x + index_x) // 2
             hand_center_y = (thumb_y + index_y) // 2
 
@@ -129,22 +127,22 @@ with mp_hands.Hands(
                         pdf_viewer.next_page()
                     else:
                         pdf_viewer.prev_page()
-                    last_hand_center = None  # Reset center to prevent multiple swipes
+                    last_hand_center = None  # Reset to prevent multiple swipes
 
             last_hand_center = (hand_center_x, hand_center_y)
 
-        # Render PDF frame and overlay
+        # Render PDF frame
         pdf_frame = pdf_viewer.render()
         cv2.imshow("PDF Viewer", pdf_frame)
 
-        # Display the camera feed with landmarks for debugging
+        # Display hand landmarks for debugging
         if results.multi_hand_landmarks:
             mp_drawing.draw_landmarks(frame, results.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
         cv2.imshow("Hand Tracking", frame)
 
-        # Exit on ESC key
-        if cv2.waitKey(1) & 0xFF == 27:
+        # Exit on 'q' key
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-cap.release()
+picam2.stop()
 cv2.destroyAllWindows()
