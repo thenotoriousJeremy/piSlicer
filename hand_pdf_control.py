@@ -94,45 +94,39 @@ with mp_hands.Hands(
         # Convert frame back to BGR after processing
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
+        # Pinch detection for zoom
         if results.multi_hand_landmarks:
             landmarks = results.multi_hand_landmarks[0].landmark
             thumb_tip = landmarks[mp_hands.HandLandmark.THUMB_TIP]
             index_tip = landmarks[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            pinch_distance = np.sqrt((thumb_tip.x - index_tip.x) ** 2 + (thumb_tip.y - index_tip.y) ** 2)
 
-            # Convert normalized Mediapipe coordinates to pixel coordinates
-            h, w, _ = frame.shape
-            thumb_x, thumb_y = int(thumb_tip.x * w), int(thumb_tip.y * h)
-            index_x, index_y = int(index_tip.x * w), int(index_tip.y * h)
-
-            # Calculate pinch distance
-            pinch_distance = np.sqrt((thumb_x - index_x) ** 2 + (thumb_y - index_y) ** 2)
-
-            # Detect pinch gesture for zooming
             if base_pinch_distance is None:
                 base_pinch_distance = pinch_distance
 
-            zoom_factor = pinch_distance / base_pinch_distance
-            if zoom_factor > 1.1:
+            if pinch_distance > base_pinch_distance * 1.2:
                 pdf_viewer.zoom_in()
                 base_pinch_distance = pinch_distance
-            elif zoom_factor < 0.9:
+            elif pinch_distance < base_pinch_distance * 0.8:
                 pdf_viewer.zoom_out()
                 base_pinch_distance = pinch_distance
 
-            # Detect swipe gesture for page navigation
-            hand_center_x = (thumb_x + index_x) // 2
-            hand_center_y = (thumb_y + index_y) // 2
+        # Swipe detection for page navigation
+        hand_center_x = (landmarks[mp_hands.HandLandmark.WRIST].x +
+                        landmarks[mp_hands.HandLandmark.MIDDLE_FINGER_TIP].x) / 2
+        if last_hand_center is not None:
+            dx = hand_center_x - last_hand_center[0]
+            if dx > 0.1:  # Swipe Right
+                pdf_viewer.next_page()
+            elif dx < -0.1:  # Swipe Left
+                pdf_viewer.prev_page()
+        last_hand_center = (hand_center_x, hand_center_y)
 
-            if last_hand_center is not None:
-                dx = hand_center_x - last_hand_center[0]
-                if abs(dx) > 50:  # Swipe detection threshold
-                    if dx > 0:
-                        pdf_viewer.next_page()
-                    else:
-                        pdf_viewer.prev_page()
-                    last_hand_center = None  # Reset to prevent multiple swipes
-
-            last_hand_center = (hand_center_x, hand_center_y)
+        # Drag detection for panning
+        if last_hand_center is not None:
+            dx = hand_center_x - last_hand_center[0]
+            dy = hand_center_y - last_hand_center[1]
+            pdf_viewer.pan(dx * 0.01, dy * 0.01)
 
         # Render PDF frame
         pdf_frame = pdf_viewer.render()
