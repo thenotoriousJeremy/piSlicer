@@ -1,0 +1,4 @@
+python3-opencv
+mediapipe-rpi
+pymupdf
+python3-pyqt5
