@@ -1,12 +1,13 @@
 import cv2
 import mediapipe as mp
-import fitz  # PyMuPDF for handling PDF files
+import fitz  # PyMuPDF for PDF rendering
 import numpy as np
 
 # Mediapipe setup
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 
+# Initialize PDF Viewer
 class PDFManipulator:
     def __init__(self, pdf_path):
         self.pdf = fitz.open(pdf_path)
@@ -27,12 +28,12 @@ class PDFManipulator:
         h, w, _ = self.image.shape
         crop_x = int(self.pan_x * w)
         crop_y = int(self.pan_y * h)
-        crop_width = min(w - crop_x, 800)
-        crop_height = min(h - crop_y, 600)
+        crop_width = min(w - crop_x, 640)
+        crop_height = min(h - crop_y, 480)
 
         # Crop the image based on pan
         cropped_image = self.image[crop_y:crop_y+crop_height, crop_x:crop_x+crop_width]
-        return cv2.resize(cropped_image, (800, 600))
+        return cv2.resize(cropped_image, (640, 480))
 
     def zoom_in(self):
         self.zoom = min(self.zoom + 0.1, 3.0)
@@ -56,89 +57,90 @@ class PDFManipulator:
         self.pan_x = max(0, min(self.pan_x + dx, 1.0))
         self.pan_y = max(0, min(self.pan_y + dy, 1.0))
 
-class HandGesturePDFControl:
-    def __init__(self, pdf_path):
-        self.pdf = PDFManipulator(pdf_path)
-        self.cap = cv2.VideoCapture(0)
-        self.hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.5)
+# Initialize the camera
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+cap.set(cv2.CAP_PROP_FPS, 30)
 
-        self.base_pinch_distance = None
-        self.last_hand_center = None
+# Initialize PDF Manipulator
+pdf_viewer = PDFManipulator("sample.pdf")
 
-    def detect_gesture(self, landmarks, w, h):
-        thumb_tip = landmarks[mp_hands.HandLandmark.THUMB_TIP]
-        index_tip = landmarks[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+# Mediapipe Hands configuration
+with mp_hands.Hands(
+    static_image_mode=False,
+    max_num_hands=1,  # Track one hand for simplicity
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+) as hands:
 
-        # Convert normalized Mediapipe coordinates to pixel coordinates
-        thumb_x, thumb_y = int(thumb_tip.x * w), int(thumb_tip.y * h)
-        index_x, index_y = int(index_tip.x * w), int(index_tip.y * h)
+    base_pinch_distance = None
+    last_hand_center = None
 
-        # Calculate distance between thumb and index finger
-        pinch_distance = np.sqrt((thumb_x - index_x) ** 2 + (thumb_y - index_y) ** 2)
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Error: Could not read frame.")
+            break
 
-        return (thumb_x, thumb_y, index_x, index_y, pinch_distance)
+        frame = cv2.flip(frame, 1)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    def run(self):
-        while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                break
+        # Process the frame with Mediapipe
+        results = hands.process(rgb_frame)
 
-            frame = cv2.flip(frame, 1)
+        if results.multi_hand_landmarks:
+            landmarks = results.multi_hand_landmarks[0].landmark
+            thumb_tip = landmarks[mp_hands.HandLandmark.THUMB_TIP]
+            index_tip = landmarks[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+
+            # Convert normalized Mediapipe coordinates to pixel coordinates
             h, w, _ = frame.shape
+            thumb_x, thumb_y = int(thumb_tip.x * w), int(thumb_tip.y * h)
+            index_x, index_y = int(index_tip.x * w), int(index_tip.y * h)
 
-            # Process the frame with Mediapipe
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(rgb_frame)
+            # Calculate pinch distance
+            pinch_distance = np.sqrt((thumb_x - index_x) ** 2 + (thumb_y - index_y) ** 2)
 
-            if results.multi_hand_landmarks:
-                hand_landmarks = results.multi_hand_landmarks[0]
-                thumb_x, thumb_y, index_x, index_y, pinch_distance = self.detect_gesture(hand_landmarks.landmark, w, h)
+            # Detect pinch gesture for zooming
+            if base_pinch_distance is None:
+                base_pinch_distance = pinch_distance
 
-                # Draw hand landmarks
-                mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+            zoom_factor = pinch_distance / base_pinch_distance
+            if zoom_factor > 1.1:
+                pdf_viewer.zoom_in()
+                base_pinch_distance = pinch_distance
+            elif zoom_factor < 0.9:
+                pdf_viewer.zoom_out()
+                base_pinch_distance = pinch_distance
 
-                # Detect pinch gesture
-                if self.base_pinch_distance is None:
-                    self.base_pinch_distance = pinch_distance
+            # Detect swipe for page navigation
+            hand_center_x = (thumb_x + index_x) // 2
+            hand_center_y = (thumb_y + index_y) // 2
 
-                zoom_factor = pinch_distance / self.base_pinch_distance
-                if zoom_factor > 1.1:
-                    self.pdf.zoom_in()
-                    self.base_pinch_distance = pinch_distance
-                elif zoom_factor < 0.9:
-                    self.pdf.zoom_out()
-                    self.base_pinch_distance = pinch_distance
+            if last_hand_center is not None:
+                dx = hand_center_x - last_hand_center[0]
+                if abs(dx) > 50:  # Swipe detection threshold
+                    if dx > 0:
+                        pdf_viewer.next_page()
+                    else:
+                        pdf_viewer.prev_page()
+                    last_hand_center = None  # Reset center to prevent multiple swipes
 
-                # Detect swipe for page navigation
-                hand_center_x = (thumb_x + index_x) // 2
-                hand_center_y = (thumb_y + index_y) // 2
+            last_hand_center = (hand_center_x, hand_center_y)
 
-                if self.last_hand_center is not None:
-                    dx = hand_center_x - self.last_hand_center[0]
-                    if abs(dx) > 50:
-                        if dx > 0:
-                            self.pdf.next_page()
-                        else:
-                            self.pdf.prev_page()
-                        self.last_hand_center = None  # Reset center to prevent multiple swipes
+        # Render PDF frame and overlay
+        pdf_frame = pdf_viewer.render()
+        cv2.imshow("PDF Viewer", pdf_frame)
 
-                self.last_hand_center = (hand_center_x, hand_center_y)
+        # Display the camera feed with landmarks for debugging
+        if results.multi_hand_landmarks:
+            mp_drawing.draw_landmarks(frame, results.multi_hand_landmarks[0], mp_hands.HAND_CONNECTIONS)
+        cv2.imshow("Hand Tracking", frame)
 
-            # Render the PDF and show it
-            pdf_frame = self.pdf.render()
-            cv2.imshow("PDF Viewer", pdf_frame)
+        # Exit on ESC key
+        if cv2.waitKey(1) & 0xFF == 27:
+            break
 
-            # Show the camera feed for debugging (optional)
-            cv2.imshow("Camera", frame)
-
-            # Break on ESC key
-            if cv2.waitKey(1) & 0xFF == 27:
-                break
-
-        self.cap.release()
-        cv2.destroyAllWindows()
-
-if __name__ == "__main__":
-    pdf_control = HandGesturePDFControl("sample.pdf")
-    pdf_control.run()
+cap.release()
+cv2.destroyAllWindows()
