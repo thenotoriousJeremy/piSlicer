@@ -58,7 +58,11 @@ class PDFManipulator:
         self.pan_y = max(0, min(self.pan_y + dy, 1.0))
 
 # Initialize the camera
-cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+pipeline = (
+    "libcamerasrc ! video/x-raw,width=640,height=480,framerate=30/1 ! "
+    "videoconvert ! appsink"
+)
+cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 cap.set(cv2.CAP_PROP_FPS, 30)
